@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    function isSelf(id) {
+      return request.auth != null && request.auth.uid == id;
+    }
+
+    // Documento bandera: existe solo despues de crear al primer administrador.
+    match /config/setup {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow read: if request.auth != null;
+      // Un usuario puede auto-nombrarse admin SOLO si todavia no existe ningun admin (arranque inicial).
+      // Despues de eso, solo un admin existente puede crear otros admins.
+      allow create: if isAdmin() ||
+        (isSelf(adminId) && !exists(/databases/$(database)/documents/config/setup));
+      allow update, delete: if isAdmin();
+    }
+
+    match /clientes/{clienteId} {
+      allow read: if isAdmin() || isSelf(clienteId);
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /asignaciones/{asignacionId} {
+      allow read: if request.auth != null;
+      // El admin puede reservar por cualquiera; el cliente solo puede reservar para si mismo.
+      allow create: if isAdmin() ||
+        (request.auth != null && request.resource.data.clienteId == request.auth.uid);
+      allow delete: if isAdmin() ||
+        (request.auth != null && resource.data.clienteId == request.auth.uid);
+      allow update: if false;
+    }
+  }
+}
