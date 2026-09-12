@@ -612,7 +612,7 @@ function bindEvents(){
       batch.set(db.collection("config").doc("setup"), { creado: true, fecha: todayStr() });
       await batch.commit();
     } catch (err) {
-      ctx.error = "No se pudo completar la configuración. Revisa las reglas de Firestore.";
+      ctx.error = "Error real de Firebase: " + (err.code || "") + " — " + (err.message || err);
       render();
     }
   };
