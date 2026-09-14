@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Forja · Gimnasio</title>
+<title>Geofit Studio · Gimnasio</title>
 <style>
   :root{
     --bg:#1B1D1F; --surface:#232629; --surface2:#2A2E31; --surface3:#303538;
-    --border:#383D40; --accent:#FF6A2B; --accent-dim:#7A3B1D; --accent2:#3DDC97;
+    --border:#383D40; --accent:#22C1E8; --accent-dim:#0F5C6E; --accent2:#3DDC97;
     --danger:#FF4757; --warning:#FFC145; --text:#F5F3EF; --muted:#9AA0A6; --faint:#6B7075;
   }
   *{box-sizing:border-box;}
@@ -70,7 +70,7 @@
 </style>
 </head>
 <body>
-<div id="app"><div class="loading">Cargando Forja…</div></div>
+<div id="app"><div class="loading">Cargando Geofit Studio…</div></div>
 
 <!-- Firebase SDK (modo compat, sin necesidad de herramientas de compilación) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -231,13 +231,13 @@ async function cerrarSesion(){ await auth.signOut(); }
    6) RENDER PRINCIPAL
    ========================================================= */
 function render(){
-  if (ctx.cargando){ app.innerHTML = `<div class="loading">Cargando Forja…</div>`; return; }
+  if (ctx.cargando){ app.innerHTML = `<div class="loading">Cargando Geofit Studio…</div>`; return; }
 
   let header = `
     <header>
       <div class="brand">
-        <div class="logo">F</div>
-        <div><h1>Forja</h1><div class="sub">Panel del gimnasio</div></div>
+        <div class="logo">G</div>
+        <div><h1>Geofit Studio</h1><div class="sub">Panel del gimnasio</div></div>
       </div>
       ${ctx.user ? `
         <div class="row">
