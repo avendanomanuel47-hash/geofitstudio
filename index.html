@@ -328,6 +328,7 @@ function viewAdminClientes(){
       <div class="row" style="justify-content:space-between;align-items:flex-start;">
         <div>
           <div style="font-weight:800;font-size:15px;">${esc(c.nombre)}</div>
+          <div class="muted" style="margin-top:2px;">Usuario de acceso: <strong style="color:var(--accent);">${esc(c.usuario||"—")}</strong></div>
           <div class="muted" style="margin-top:2px;">${c.peso?c.peso+" kg":"Sin peso"} · ${c.altura?c.altura+" cm":"Sin altura"} · Mensualidad $${c.montoMensualidad||0}</div>
           <div class="row" style="margin-top:8px;">
             <span class="pill" style="background:${cat.c}22;color:${cat.c};border:1px solid ${cat.c}55;">IMC ${valor?valor.toFixed(1):"—"} · ${cat.t}</span>
@@ -742,6 +743,7 @@ function bindNuevoClienteForm(q){
       const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
       await db.collection("clientes").doc(cred.user.uid).set({
         nombre,
+        usuario: usuario.trim().toLowerCase().replace(/[^a-z0-9._-]/g, ""),
         peso: Number(q("#ncPeso").value) || null,
         altura: Number(q("#ncAltura").value) || null,
         montoMensualidad: Number(q("#ncMonto").value) || 0,
