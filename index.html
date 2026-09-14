@@ -59,8 +59,10 @@
     background:var(--surface);color:var(--text);cursor:pointer;}
   .slot-btn:hover{opacity:0.9;}
   .slot-btn.active{background:var(--accent);color:#1B1D1F;}
-  .slot-btn.mine{background:rgba(61,220,151,0.15);}
-  .slot-btn.full{background:var(--surface3);}
+  .slot-btn.ocupado{background:rgba(34,193,232,0.16);}
+  .slot-btn.mine{background:rgba(61,220,151,0.18);}
+  .slot-btn.full{background:rgba(255,71,87,0.16);}
+  .slot-btn:disabled{opacity:0.45;cursor:not-allowed;}
   .slot-count{font-weight:900;}
   .list-item{display:flex;align-items:center;justify-content:between;background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:6px;font-size:13px;}
   .list-item span:last-child{margin-left:auto;font-weight:700;}
@@ -102,21 +104,29 @@ const secondaryAuth = secondaryApp.auth();
 /* =========================================================
    2) CONSTANTES DEL GIMNASIO
    ========================================================= */
-const CAPACIDAD = 12;
-const SLOTS_SEMANA = [
-  { id: "s0", label: "7:30 – 8:30" },
-  { id: "s1", label: "8:30 – 9:30" },
-  { id: "s2", label: "16:00 – 17:00" },
-  { id: "s3", label: "17:00 – 18:00" },
-  { id: "s4", label: "18:00 – 19:00" },
+const CAPACIDAD = 5;
+// Horarios de la mañana: lunes a jueves
+const SLOTS_MANANA = [
+  { id: "h07", label: "7:00 – 8:00", hora: 7 },
+  { id: "h08", label: "8:00 – 9:00", hora: 8 },
 ];
+// Horarios de la tarde: lunes a viernes
+const SLOTS_TARDE = [
+  { id: "h16", label: "16:00 – 17:00", hora: 16 },
+  { id: "h17", label: "17:00 – 18:00", hora: 17 },
+  { id: "h18", label: "18:00 – 19:00", hora: 18 },
+  { id: "h19", label: "19:00 – 20:00", hora: 19 },
+];
+// Sábado: running club + horarios de la mañana
+const SLOT_RUNNING = { id: "h06run", label: "6:00 – 7:00 · Running Club", hora: 6 };
 const SLOTS_SABADO = [
-  { id: "sa0", label: "8:00 – 9:00" },
-  { id: "sa1", label: "9:00 – 10:00" },
-  { id: "sa2", label: "10:00 – 11:00" },
+  SLOT_RUNNING,
+  { id: "h08sab", label: "8:00 – 9:00", hora: 8 },
+  { id: "h09sab", label: "9:00 – 10:00", hora: 9 },
 ];
 const DIAS_CORTO = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MAX_CLIENTES = 40;
+const HORAS_ANTICIPACION = 3;
 const DOMINIO_CLIENTES = "clientes.forja-gym.app"; // dominio ficticio para usuarios sin correo real
 
 /* =========================================================
@@ -126,7 +136,13 @@ function todayStr(){ return new Date().toISOString().slice(0,10); }
 function addDays(s,n){ const d=new Date(s+"T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function addMonths(s,n){ const d=new Date(s+"T00:00:00"); d.setMonth(d.getMonth()+n); return d.toISOString().slice(0,10); }
 function mondayOf(s){ const d=new Date(s+"T00:00:00"); const day=d.getDay(); const diff=day===0?-6:1-day; d.setDate(d.getDate()+diff); return d.toISOString().slice(0,10); }
-function slotsForDate(s){ const day=new Date(s+"T00:00:00").getDay(); if(day===0) return []; if(day===6) return SLOTS_SABADO; return SLOTS_SEMANA; }
+function slotsForDate(s){
+  const day=new Date(s+"T00:00:00").getDay();
+  if(day===0) return [];               // domingo: sin clases
+  if(day===6) return SLOTS_SABADO;      // sábado
+  if(day===5) return SLOTS_TARDE;       // viernes: solo tarde
+  return [...SLOTS_MANANA, ...SLOTS_TARDE]; // lunes a jueves
+}
 function fmtFecha(s){ return new Date(s+"T00:00:00").toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"}); }
 function imc(peso,alturaCm){ if(!peso||!alturaCm) return null; const m=alturaCm/100; return peso/(m*m); }
 function imcCategoria(v){ if(v==null) return {t:"Sin datos",c:"var(--faint)"}; if(v<18.5) return {t:"Bajo peso",c:"var(--warning)"};
@@ -137,7 +153,14 @@ function estadoPago(prox){ if(!prox) return {t:"Sin registro",c:"var(--faint)"};
   return {t:"Al día",c:"var(--accent2)"}; }
 function esc(s){ return (s||"").toString().replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function usuarioToEmail(u){ const limpio=u.trim().toLowerCase().replace(/[^a-z0-9._-]/g,""); return `${limpio}@${DOMINIO_CLIENTES}`; }
-function allSlots(){ return [...SLOTS_SEMANA, ...SLOTS_SABADO]; }
+function allSlots(){ return [...SLOTS_MANANA, ...SLOTS_TARDE, ...SLOTS_SABADO]; }
+function inicioSlot(fecha, slot){ const d = new Date(fecha+"T00:00:00"); d.setHours(slot.hora,0,0,0); return d; }
+function faltaAnticipacion(fecha, slot){
+  const limite = new Date(Date.now() + HORAS_ANTICIPACION*60*60*1000);
+  return inicioSlot(fecha, slot) < limite;
+}
+
+
 
 /* =========================================================
    4) ESTADO GLOBAL
@@ -395,10 +418,10 @@ function viewAdminClases(){
         </div>
         <div class="slot-list">
           ${slots.map(s=>{
-            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD;
+            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD; const ocupado = n>0 && !lleno;
             const activa = ctx.selected && ctx.selected.fecha===fecha && ctx.selected.slotId===s.id;
-            return `<button class="slot-btn ${activa?"active":""} ${lleno?"full":""}" data-fecha="${fecha}" data-slot="${s.id}" data-label="${s.label}">
-              <div>${s.label}</div><div class="slot-count" style="color:${activa?"#1B1D1F":lleno?"var(--danger)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
+            return `<button class="slot-btn ${activa?"active":""} ${lleno?"full":""} ${ocupado?"ocupado":""}" data-fecha="${fecha}" data-slot="${s.id}" data-label="${s.label}">
+              <div>${s.label}</div><div class="slot-count" style="color:${activa?"#1B1D1F":lleno?"var(--danger)":ocupado?"var(--accent)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
             </button>`;
           }).join("")}
         </div>
@@ -495,15 +518,17 @@ function viewCliente(){
         </div>
         <div class="slot-list">
           ${slots.map(s=>{
-            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD;
+            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD; const ocupado = n>0 && !lleno;
             const esMia = ctx.asignaciones.some(a=>a.clienteId===c.id && a.fecha===fecha && a.slotId===s.id);
             const activa = ctx.selected && ctx.selected.fecha===fecha && ctx.selected.slotId===s.id;
-            const bloqueado = esPasado || (misFechas.has(fecha) && !esMia);
-            return `<button class="slot-btn ${activa?"active":""} ${lleno&&!esMia?"full":""} ${esMia?"mine":""}"
+            const muyPronto = !esMia && faltaAnticipacion(fecha, s);
+            const bloqueado = esPasado || muyPronto || (lleno && !esMia) || (misFechas.has(fecha) && !esMia);
+            return `<button class="slot-btn ${activa?"active":""} ${lleno&&!esMia?"full":""} ${ocupado&&!esMia?"ocupado":""} ${esMia?"mine":""}"
               ${bloqueado?"disabled":""}
               data-fecha="${fecha}" data-slot="${s.id}" data-label="${s.label}">
               <div>${s.label}${esMia?" ✓":""}</div>
-              <div class="slot-count" style="color:${activa?"#1B1D1F":lleno&&!esMia?"var(--danger)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
+              <div class="slot-count" style="color:${activa?"#1B1D1F":lleno&&!esMia?"var(--danger)":ocupado&&!esMia?"var(--accent)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
+              ${muyPronto ? `<div style="font-size:9px;color:var(--faint);margin-top:2px;">Requiere ${HORAS_ANTICIPACION}h de anticipación</div>` : ``}
             </button>`;
           }).join("")}
         </div>
@@ -789,6 +814,12 @@ async function intentarReservar(clienteId, fecha, slotId, creadoPor){
   if (yaTiene) return { ok:false, msg:"Ese cliente ya tiene una clase asignada ese día (máximo 1 diaria)." };
   const enSlot = ctx.asignaciones.filter(a=>a.fecha===fecha && a.slotId===slotId).length;
   if (enSlot >= CAPACIDAD) return { ok:false, msg:"Ese horario ya alcanzó su capacidad máxima." };
+  if (creadoPor === "cliente") {
+    const slot = allSlots().find(s=>s.id===slotId);
+    if (slot && faltaAnticipacion(fecha, slot)) {
+      return { ok:false, msg:`Las reservas requieren al menos ${HORAS_ANTICIPACION} horas de anticipación.` };
+    }
+  }
   try {
     await db.collection("asignaciones").add({ clienteId, fecha, slotId, creadoPor });
     return { ok:true };
