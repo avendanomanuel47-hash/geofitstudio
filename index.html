@@ -177,11 +177,60 @@ function faltaAnticipacion(fecha, slot){
   return inicioSlot(fecha, slot) < limite;
 }
 
+// --- Rachas, insignias y cumpleaños ---
+function totalAsistencias(clienteId){
+  return ctx.asignaciones.filter(a=>a.clienteId===clienteId && a.asistio===true).length;
+}
+function calcularRacha(clienteId){
+  const semanas = new Set(ctx.asignaciones.filter(a=>a.clienteId===clienteId && a.asistio===true).map(a=>mondayOf(a.fecha)));
+  let racha = 0, semana = mondayOf(todayStr());
+  while (semanas.has(semana)) { racha++; semana = addDays(semana, -7); }
+  return racha;
+}
+const NIVELES_INSIGNIA = [
+  { n:10, e:"🥉", label:"10 clases" },
+  { n:25, e:"🥈", label:"25 clases" },
+  { n:50, e:"🥇", label:"50 clases" },
+  { n:100, e:"💎", label:"100 clases" },
+];
+const NIVELES_RACHA = [
+  { n:4, e:"🔥", label:"4 semanas seguidas" },
+  { n:8, e:"🔥🔥", label:"8 semanas seguidas" },
+  { n:12, e:"🔥🔥🔥", label:"12 semanas seguidas" },
+];
+function insigniasCliente(clienteId){
+  const total = totalAsistencias(clienteId);
+  const racha = calcularRacha(clienteId);
+  return [
+    ...NIVELES_INSIGNIA.filter(x=>total>=x.n).map(x=>({...x})),
+    ...NIVELES_RACHA.filter(x=>racha>=x.n).map(x=>({...x})),
+  ];
+}
+function mejorInsignia(clienteId){
+  const ins = insigniasCliente(clienteId);
+  return ins.length ? ins[ins.length-1].e : "";
+}
+function esCumpleañosHoy(fechaNac){
+  if (!fechaNac) return false;
+  const hoy = new Date(); const d = new Date(fechaNac+"T00:00:00");
+  return d.getDate()===hoy.getDate() && d.getMonth()===hoy.getMonth();
+}
+function diasHastaCumple(fechaNac){
+  if (!fechaNac) return 999;
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const d = new Date(fechaNac+"T00:00:00");
+  let prox = new Date(hoy.getFullYear(), d.getMonth(), d.getDate());
+  if (prox < hoy) prox = new Date(hoy.getFullYear()+1, d.getMonth(), d.getDate());
+  return Math.round((prox - hoy) / 86400000);
+}
+
 
 
 /* =========================================================
    4) ESTADO GLOBAL
    ========================================================= */
+const EMOJIS = ["👍","🔥","💪","👏"];
+
 let ctx = {
   cargando: true,
   user: null,
@@ -191,14 +240,18 @@ let ctx = {
   admins: [],
   clientes: [],
   asignaciones: [],
+  perfiles: [],
+  reacciones: [],
   setupExiste: null,
   adminTab: "clientes",
+  clienteTab: "reservar", // reservar | muro | top
   weekStart: mondayOf(todayStr()),
   selected: null,
   error: "",
 };
 let unsubs = [];
 function limpiarListeners(){ unsubs.forEach(u=>u&&u()); unsubs=[]; }
+function nombrePerfil(uid){ const p = ctx.perfiles.find(x=>x.id===uid); return p ? p.nombre : "Alguien"; }
 
 const app = document.getElementById("app");
 
@@ -247,17 +300,27 @@ function suscribirAdmin(){
   unsubs.push(db.collection("asignaciones").onSnapshot(qs=>{
     ctx.asignaciones = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
   }));
+  unsubs.push(db.collection("perfiles").onSnapshot(qs=>{
+    ctx.perfiles = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
+  }));
 }
 function suscribirCliente(){
   unsubs.push(db.collection("clientes").doc(ctx.user.uid).onSnapshot(d=>{
     if(d.exists) ctx.clienteDoc = { id:d.id, ...d.data() }; render();
   }));
-  unsubs.push(db.collection("asignaciones").where("clienteId","==",ctx.user.uid).onSnapshot(qs=>{
+  // Todas las asignaciones (no solo las propias): hacen falta para el Muro y el Top 10.
+  unsubs.push(db.collection("asignaciones").onSnapshot(qs=>{
     ctx.asignaciones = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
   }));
   unsubs.push(db.collection("clientes").onSnapshot(qs=>{
     // se usa solo para saber cuantos clientes hay por dia al reservar (conteo por franja)
     ctx.clientes = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
+  }));
+  unsubs.push(db.collection("perfiles").onSnapshot(qs=>{
+    ctx.perfiles = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
+  }));
+  unsubs.push(db.collection("reacciones").onSnapshot(qs=>{
+    ctx.reacciones = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
   }));
 }
 
@@ -370,6 +433,8 @@ function viewAdminClientes(){
           <div style="font-weight:800;font-size:15px;">${esc(c.nombre)}</div>
           <div class="muted" style="margin-top:2px;">Usuario de acceso: <strong style="color:var(--accent);">${esc(c.usuario||"—")}</strong></div>
           <div class="muted" style="margin-top:2px;">${c.peso?c.peso+" kg":"Sin peso"} · ${c.altura?c.altura+" cm":"Sin altura"} · Mensualidad $${c.montoMensualidad||0}</div>
+          <div class="muted" style="margin-top:2px;">Tel: ${esc(c.telefono||"—")}${c.fechaNacimiento?` · Nac: ${fmtFecha(c.fechaNacimiento)}`:``}</div>
+          ${esCumpleañosHoy(c.fechaNacimiento) ? `<span class="pill" style="background:rgba(255,193,69,0.18);color:var(--warning);border:1px solid rgba(255,193,69,0.4);margin-top:6px;">🎂 Hoy es su cumpleaños</span>` : ``}
           <div class="row" style="margin-top:8px;">
             <span class="pill" style="background:${cat.c}22;color:${cat.c};border:1px solid ${cat.c}55;">IMC ${valor?valor.toFixed(1):"—"} · ${cat.t}</span>
             <span class="pill" style="background:${pago.c}22;color:${pago.c};border:1px solid ${pago.c}55;">${pago.t}${c.proximoPago?" · "+fmtFecha(c.proximoPago):""}</span>
@@ -391,8 +456,21 @@ function viewAdminClientes(){
   return `
   <div class="row" style="justify-content:space-between;margin-bottom:14px;">
     <div class="muted"><strong style="color:var(--text);font-size:17px;">${ctx.clientes.length}</strong> / ${MAX_CLIENTES} clientes registrados</div>
-    <button class="btn-primary" id="btnNuevoCliente">+ Nuevo cliente</button>
+    <div class="row">
+      <button class="btn-ghost" id="btnSincronizarPerfiles" title="Necesario una vez para que el Muro y el Top 10 muestren bien los nombres de clientes creados antes de esta actualización">Sincronizar nombres públicos</button>
+      <button class="btn-primary" id="btnNuevoCliente">+ Nuevo cliente</button>
+    </div>
   </div>
+  ${(() => {
+    const proximos = ctx.clientes.filter(c=>c.fechaNacimiento).map(c=>({c, dias: diasHastaCumple(c.fechaNacimiento)}))
+      .filter(x=>x.dias<=30).sort((a,b)=>a.dias-b.dias);
+    if (proximos.length===0) return "";
+    return `<div class="card" style="margin-bottom:14px;">
+      <h2>🎂 Próximos cumpleaños (30 días)</h2>
+      ${proximos.map(({c,dias})=>`<div class="list-item"><span>${esc(c.nombre)}</span>
+        <span style="color:var(--warning);">${dias===0?"¡Hoy!":dias===1?"Mañana":`En ${dias} días`}</span></div>`).join("")}
+    </div>`;
+  })()}
   <div id="formNuevoCliente"></div>
   ${ctx.clientes.length===0 ? `<div class="card faint" style="text-align:center;padding:40px;">Aún no hay clientes.</div>` : rows}
   `;
@@ -408,6 +486,8 @@ function formNuevoClienteHtml(){
       <div><label>Peso (kg)</label><input id="ncPeso" type="number" step="0.1" /></div>
       <div><label>Altura (cm)</label><input id="ncAltura" type="number" /></div>
       <div><label>Mensualidad ($)</label><input id="ncMonto" type="number" step="0.01" /></div>
+      <div><label>Teléfono (solo lo ve el admin)</label><input id="ncTelefono" type="tel" placeholder="ej. 8888-8888" /></div>
+      <div><label>Fecha de nacimiento (solo admin)</label><input id="ncNacimiento" type="date" /></div>
       ${ctx.error ? `<div class="err" style="grid-column:1/-1;">${esc(ctx.error)}</div>` : ``}
       <div class="row" style="grid-column:1/-1;">
         <button class="btn-primary" type="submit">Guardar</button>
@@ -460,8 +540,12 @@ function viewAdminClases(){
         ${asignados.length===0 ? `<div class="faint">Sin clientes asignados todavía.</div>` :
           asignados.map(a=>{
             const c = ctx.clientes.find(x=>x.id===a.clienteId);
-            return `<div class="list-item"><span>${esc(c?c.nombre:"Cliente eliminado")}</span>
-              <button class="btn-danger" data-quitar="${a.id}" style="margin-left:auto;">Quitar</button></div>`;
+            return `<div class="list-item">
+              <span>${esc(c?c.nombre:"Cliente eliminado")}</span>
+              <button class="btn-ghost" data-toggleasistio="${a.id}" style="margin-left:auto;${a.asistio?`background:rgba(61,220,151,0.18);color:var(--accent2);`:``}">
+                ${a.asistio ? "✓ Asistió" : "Marcar asistencia"}
+              </button>
+              <button class="btn-danger" data-quitar="${a.id}">Quitar</button></div>`;
           }).join("")}
       </div>
       ${disponibles.length===0 ? `<div class="faint" style="margin-top:10px;">No hay clientes disponibles ese día.</div>` : `
@@ -515,6 +599,10 @@ function viewCliente(){
   const proximas = ctx.asignaciones.filter(a=>a.clienteId===c.id && a.fecha>=todayStr())
     .sort((a,b)=>a.fecha.localeCompare(b.fecha))
     .map(a=>({...a, slotLabel: (allSlots().find(s=>s.id===a.slotId)||{}).label || a.slotId}));
+
+  const encuestaPendiente = ctx.asignaciones
+    .filter(a=>a.clienteId===c.id && a.asistio===true && !a.animo && a.fecha>=addDays(todayStr(),-3))
+    .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
 
   const dias = []; for(let i=0;i<6;i++) dias.push(addDays(ctx.weekStart,i));
   const contar = (fecha,slotId) => ctx.asignaciones.filter(a=>a.fecha===fecha && a.slotId===slotId).length;
@@ -575,11 +663,21 @@ function viewCliente(){
   <div class="grid" style="gap:16px;">
     <div class="card">
       <div style="font-size:20px;font-weight:900;">${esc(c.nombre)}</div>
+      ${esCumpleañosHoy(c.fechaNacimiento) ? `<div class="pill" style="background:rgba(255,193,69,0.18);color:var(--warning);border:1px solid rgba(255,193,69,0.4);margin-top:8px;">🎂 ¡Feliz cumpleaños!</div>` : ``}
       <div class="grid grid-3" style="margin-top:14px;">
         <div><div class="stat-label">Peso</div><div class="stat-value">${c.peso?c.peso+" kg":"—"}</div></div>
         <div><div class="stat-label">Altura</div><div class="stat-value">${c.altura?c.altura+" cm":"—"}</div></div>
         <div><div class="stat-label">IMC</div><div class="stat-value">${valor?valor.toFixed(1):"—"}</div><div style="color:${cat.c};font-size:12px;font-weight:700;">${cat.t}</div></div>
       </div>
+      <div class="grid grid-2" style="margin-top:14px;">
+        <div><div class="stat-label">Racha actual</div><div class="stat-value">🔥 ${calcularRacha(c.id)} <span style="font-size:13px;color:var(--muted);">semana${calcularRacha(c.id)===1?"":"s"}</span></div></div>
+        <div><div class="stat-label">Clases verificadas</div><div class="stat-value">${totalAsistencias(c.id)}</div></div>
+      </div>
+      ${insigniasCliente(c.id).length ? `
+      <div style="margin-top:14px;">
+        <div class="stat-label" style="margin-bottom:6px;">Insignias</div>
+        <div class="row">${insigniasCliente(c.id).map(i=>`<span class="pill" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);">${i.e} ${i.label}</span>`).join("")}</div>
+      </div>` : ``}
     </div>
 
     <div class="card">
@@ -592,6 +690,24 @@ function viewCliente(){
       </div>
     </div>
 
+    ${encuestaPendiente ? `
+    <div class="card" style="border-color:var(--accent);">
+      <h2>¿Cómo te sentiste en tu última clase?</h2>
+      <div class="faint" style="margin-bottom:10px;">${fmtFecha(encuestaPendiente.fecha)} · ${(allSlots().find(s=>s.id===encuestaPendiente.slotId)||{}).label||""}</div>
+      <div class="row">
+        ${[["😄","Genial"],["🙂","Bien"],["😐","Normal"],["😫","Cansado"]].map(([em,label])=>
+          `<button class="btn-ghost" data-encuesta="${encuestaPendiente.id}" data-animo="${em}" style="flex:1;flex-direction:column;padding:12px 6px;font-size:22px;">
+            <div>${em}</div><div style="font-size:10px;margin-top:4px;">${label}</div>
+          </button>`).join("")}
+      </div>
+    </div>` : ``}
+
+    <div class="tabs">
+      ${[["reservar","Reservar"],["muro","Muro"],["top","Top 10"]].map(([id,label])=>
+        `<button class="tab ${ctx.clienteTab===id?"active":""}" data-clientetab="${id}">${label}</button>`).join("")}
+    </div>
+
+    ${ctx.clienteTab==="reservar" ? `
     <div class="card">
       <h2>Reservar una clase</h2>
       <div class="row" style="justify-content:space-between;margin-bottom:10px;">
@@ -604,7 +720,8 @@ function viewCliente(){
       </div>
       ${board}
       ${panel}
-      <div class="faint" style="margin-top:10px;">Máximo 1 clase por día. Las casillas marcadas con ✓ son tus reservas.</div>
+      <div class="faint" style="margin-top:10px;">Máximo 1 clase por día. Las casillas marcadas con ✓ son tus reservas.
+        Las reservas requieren mínimo ${HORAS_ANTICIPACION} horas de anticipación.</div>
     </div>
 
     <div class="card">
@@ -612,6 +729,7 @@ function viewCliente(){
       ${proximas.length===0 ? `<div class="faint">No tienes clases reservadas.</div>` :
         proximas.map(a=>`<div class="list-item"><span>${fmtFecha(a.fecha)}</span><span style="color:var(--accent);">${a.slotLabel}</span></div>`).join("")}
     </div>
+    ` : ctx.clienteTab==="muro" ? viewMuro(c) : viewTop10() }
 
     <div>
       <h2>Mi cuenta</h2>
@@ -619,6 +737,58 @@ function viewCliente(){
     </div>
   </div>
   `;
+}
+
+function viewMuro(c){
+  const posts = ctx.asignaciones.filter(a=>a.asistio===true)
+    .sort((a,b)=> b.fecha.localeCompare(a.fecha))
+    .slice(0,30);
+  return `
+  <div class="card">
+    <h2>Muro de apoyo</h2>
+    <div class="faint" style="margin-bottom:12px;">Asistencias verificadas por el administrador. Anima a tus compañeros con un emoji 👇</div>
+    ${posts.length===0 ? `<div class="faint">Todavía no hay asistencias verificadas.</div>` :
+      posts.map(a=>{
+        const slot = allSlots().find(s=>s.id===a.slotId);
+        const esYo = a.clienteId===c.id;
+        return `
+        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <div class="row" style="justify-content:space-between;">
+            <span><strong>${esc(esYo?"Tú":nombrePerfil(a.clienteId))}</strong> ${mejorInsignia(a.clienteId)} asistió · ${fmtFecha(a.fecha)}${slot?` · ${slot.label}`:``}</span>
+          </div>
+          <div class="row">
+            ${EMOJIS.map(em=>{
+              const cuenta = ctx.reacciones.filter(r=>r.asignacionId===a.id && r.emoji===em).length;
+              const mio = ctx.reacciones.some(r=>r.asignacionId===a.id && r.emoji===em && r.clienteId===c.id);
+              return `<button class="btn-ghost" data-asig="${a.id}" data-emoji="${em}" data-reaccion
+                style="padding:4px 9px;${mio?`background:rgba(34,193,232,0.2);border-color:var(--accent);`:``}">
+                ${em} ${cuenta>0?cuenta:""}
+              </button>`;
+            }).join("")}
+          </div>
+        </div>`;
+      }).join("")}
+  </div>`;
+}
+
+function viewTop10(){
+  const conteo = {};
+  ctx.asignaciones.filter(a=>a.asistio===true).forEach(a=>{ conteo[a.clienteId] = (conteo[a.clienteId]||0) + 1; });
+  const ranking = Object.entries(conteo).map(([clienteId,total])=>({clienteId, total, nombre: nombrePerfil(clienteId)}))
+    .sort((a,b)=>b.total-a.total).slice(0,10);
+  const medallas = ["🥇","🥈","🥉"];
+  return `
+  <div class="card">
+    <h2>Top 10 · Asistencia verificada</h2>
+    ${ranking.length===0 ? `<div class="faint">Todavía no hay asistencias verificadas.</div>` :
+      ranking.map((r,i)=>`
+      <div class="list-item">
+        <span style="width:26px;">${medallas[i]||(i+1)+"."}</span>
+        <span style="flex:1;">${esc(r.nombre)} ${mejorInsignia(r.clienteId)}</span>
+        <span style="color:var(--accent);font-weight:900;">${r.total}</span>
+      </div>`).join("")}
+    <div class="faint" style="margin-top:10px;">Solo cuentan las clases marcadas como asistidas por un administrador.</div>
+  </div>`;
 }
 
 /* =========================================================
@@ -673,6 +843,14 @@ function bindAdminEvents(q, qa){
   const btnNuevo = q("#btnNuevoCliente");
   if (btnNuevo) btnNuevo.onclick = () => { q("#formNuevoCliente").innerHTML = formNuevoClienteHtml(); bindNuevoClienteForm(q); };
 
+  const btnSinc = q("#btnSincronizarPerfiles");
+  if (btnSinc) btnSinc.onclick = async () => {
+    const batch = db.batch();
+    ctx.clientes.forEach(c => batch.set(db.collection("perfiles").doc(c.id), { nombre: c.nombre }));
+    await batch.commit();
+    alert("Nombres públicos sincronizados.");
+  };
+
   qa("[data-delcliente]").forEach(b => b.onclick = async () => {
     if (!confirm("¿Eliminar este cliente? (Su cuenta de acceso deberá eliminarse también desde Firebase Authentication)")) return;
     await db.collection("clientes").doc(b.dataset.delcliente).delete();
@@ -687,15 +865,23 @@ function bindAdminEvents(q, qa){
         <div><label>Peso (kg)</label><input id="ed-peso-${c.id}" type="number" step="0.1" value="${c.peso||""}" /></div>
         <div><label>Altura (cm)</label><input id="ed-altura-${c.id}" type="number" value="${c.altura||""}" /></div>
         <div><label>Mensualidad ($)</label><input id="ed-monto-${c.id}" type="number" step="0.01" value="${c.montoMensualidad||""}" /></div>
+        <div><label>Teléfono (solo admin)</label><input id="ed-tel-${c.id}" type="tel" value="${esc(c.telefono||"")}" /></div>
+        <div><label>Fecha de nacimiento (solo admin)</label><input id="ed-nac-${c.id}" type="date" value="${c.fechaNacimiento||""}" /></div>
         <div class="row" style="align-items:end;"><button class="btn-primary" id="ed-guardar-${c.id}">Guardar</button></div>
       </div>`;
     q(`#ed-guardar-${c.id}`).onclick = async () => {
-      await db.collection("clientes").doc(c.id).update({
-        nombre: q(`#ed-nombre-${c.id}`).value.trim(),
+      const nuevoNombre = q(`#ed-nombre-${c.id}`).value.trim();
+      const batch = db.batch();
+      batch.update(db.collection("clientes").doc(c.id), {
+        nombre: nuevoNombre,
         peso: Number(q(`#ed-peso-${c.id}`).value) || null,
         altura: Number(q(`#ed-altura-${c.id}`).value) || null,
         montoMensualidad: Number(q(`#ed-monto-${c.id}`).value) || 0,
+        telefono: q(`#ed-tel-${c.id}`).value.trim() || null,
+        fechaNacimiento: q(`#ed-nac-${c.id}`).value || null,
       });
+      batch.set(db.collection("perfiles").doc(c.id), { nombre: nuevoNombre });
+      await batch.commit();
       holder.innerHTML = "";
     };
   });
@@ -731,6 +917,11 @@ function bindAdminEvents(q, qa){
   });
   const btnCerrarSel = q("#btnCerrarSel"); if (btnCerrarSel) btnCerrarSel.onclick = () => { ctx.selected = null; render(); };
   qa("[data-quitar]").forEach(b => b.onclick = async () => { await db.collection("asignaciones").doc(b.dataset.quitar).delete(); });
+  qa("[data-toggleasistio]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.toggleasistio;
+    const a = ctx.asignaciones.find(x=>x.id===id);
+    await db.collection("asignaciones").doc(id).update({ asistio: !(a && a.asistio) });
+  });
   const btnAsignar = q("#btnAsignar");
   if (btnAsignar) btnAsignar.onclick = async () => {
     const clienteId = q("#selCliente").value;
@@ -783,15 +974,20 @@ function bindNuevoClienteForm(q){
     try {
       const email = usuarioToEmail(usuario);
       const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
-      await db.collection("clientes").doc(cred.user.uid).set({
+      const batch = db.batch();
+      batch.set(db.collection("clientes").doc(cred.user.uid), {
         nombre,
         usuario: usuario.trim().toLowerCase().replace(/[^a-z0-9._-]/g, ""),
         peso: Number(q("#ncPeso").value) || null,
         altura: Number(q("#ncAltura").value) || null,
         montoMensualidad: Number(q("#ncMonto").value) || 0,
+        telefono: q("#ncTelefono").value.trim() || null,
+        fechaNacimiento: q("#ncNacimiento").value || null,
         proximoPago: null,
         pagos: [],
       });
+      batch.set(db.collection("perfiles").doc(cred.user.uid), { nombre });
+      await batch.commit();
       await secondaryAuth.signOut();
       q("#formNuevoCliente").innerHTML = "";
     } catch (err) {
@@ -802,6 +998,8 @@ function bindNuevoClienteForm(q){
 }
 
 function bindClienteEvents(q, qa){
+  qa("[data-clientetab]").forEach(b => b.onclick = () => { ctx.clienteTab = b.dataset.clientetab; ctx.selected=null; ctx.error=""; render(); });
+
   const btnSemAnt = q("#btnSemAnt"); if (btnSemAnt) btnSemAnt.onclick = () => { ctx.weekStart = addDays(ctx.weekStart,-7); render(); };
   const btnSemSig = q("#btnSemSig"); if (btnSemSig) btnSemSig.onclick = () => { ctx.weekStart = addDays(ctx.weekStart,7); render(); };
   const btnHoy = q("#btnHoy"); if (btnHoy) btnHoy.onclick = () => { ctx.weekStart = mondayOf(todayStr()); render(); };
@@ -821,6 +1019,20 @@ function bindClienteEvents(q, qa){
     await db.collection("asignaciones").doc(btnCancelar.dataset.id).delete();
     ctx.selected = null; render();
   };
+
+  qa("[data-encuesta]").forEach(b => b.onclick = async () => {
+    await db.collection("asignaciones").doc(b.dataset.encuesta).update({ animo: b.dataset.animo });
+  });
+
+  qa("[data-reaccion]").forEach(b => b.onclick = async () => {
+    const asignacionId = b.dataset.asig, emoji = b.dataset.emoji;
+    const existente = ctx.reacciones.find(r=>r.asignacionId===asignacionId && r.emoji===emoji && r.clienteId===ctx.user.uid);
+    if (existente) {
+      await db.collection("reacciones").doc(existente.id).delete();
+    } else {
+      await db.collection("reacciones").add({ asignacionId, emoji, clienteId: ctx.user.uid });
+    }
+  });
 
   const cambiarPassCliente = q("#cambiarPassCliente");
   if (cambiarPassCliente) renderCambiarPassword(cambiarPassCliente);
