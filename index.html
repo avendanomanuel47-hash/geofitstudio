@@ -541,7 +541,7 @@ function viewAdminClases(){
           asignados.map(a=>{
             const c = ctx.clientes.find(x=>x.id===a.clienteId);
             return `<div class="list-item">
-              <span>${esc(c?c.nombre:"Cliente eliminado")}</span>
+              <span>${esc(c?c.nombre:"Cliente eliminado")}${a.animo?` ${a.animo}`:``}</span>
               <button class="btn-ghost" data-toggleasistio="${a.id}" style="margin-left:auto;${a.asistio?`background:rgba(61,220,151,0.18);color:var(--accent2);`:``}">
                 ${a.asistio ? "✓ Asistió" : "Marcar asistencia"}
               </button>
