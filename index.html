@@ -89,6 +89,22 @@
   a.link{color:var(--accent);text-decoration:none;font-weight:700;}
   .loading{display:flex;align-items:center;justify-content:center;min-height:60vh;color:var(--muted);
     text-transform:uppercase;letter-spacing:2px;font-size:13px;}
+  .btn-icon{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;
+    padding:8px 10px;font-size:14px;line-height:1;display:inline-flex;align-items:center;gap:6px;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:flex-start;
+    justify-content:center;padding:16px;padding-top:calc(16px + env(safe-area-inset-top));
+    overflow-y:auto;z-index:100;}
+  .modal-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;
+    max-width:380px;width:100%;margin-top:24px;}
+  .modal-box h2{margin-bottom:2px;}
+  .qr-wrap{display:flex;justify-content:center;background:#fff;border-radius:10px;padding:14px;margin:14px 0;}
+  .link-copy{display:flex;gap:8px;align-items:center;background:var(--surface2);border:1px solid var(--border);
+    border-radius:8px;padding:8px 10px;margin-bottom:14px;}
+  .link-copy span{flex:1;font-size:12px;color:var(--text);word-break:break-all;}
+  .share-steps{margin-bottom:14px;}
+  .share-steps h3{font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent);margin:0 0 6px 0;}
+  .share-steps ol{margin:0 0 14px 18px;padding:0;font-size:13px;color:var(--text);line-height:1.5;}
+  .share-steps li{margin-bottom:2px;}
 </style>
 </head>
 <body>
@@ -98,6 +114,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<!-- Generador de código QR (sin dependencias) para el botón "Compartir app" -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <script>
 /* =========================================================
@@ -148,6 +167,7 @@ const DIAS_CORTO = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MAX_CLIENTES = 40;
 const HORAS_ANTICIPACION = 3;
 const DOMINIO_CLIENTES = "clientes.forja-gym.app"; // dominio ficticio para usuarios sin correo real
+const APP_URL = "https://avendanomanuel47-hash.github.io/geofitstudio/"; // enlace público para instalar la app
 
 /* =========================================================
    3) UTILIDADES
@@ -254,6 +274,7 @@ let ctx = {
   weekStart: mondayOf(todayStr()),
   selected: null,
   error: "",
+  mostrarCompartir: false,
 };
 let unsubs = [];
 function limpiarListeners(){ unsubs.forEach(u=>u&&u()); unsubs=[]; }
@@ -348,11 +369,11 @@ function render(){
         <div class="logo">G</div>
         <div><h1>Geofit Studio</h1><div class="sub">Panel del gimnasio</div></div>
       </div>
-      ${ctx.user ? `
-        <div class="row">
-          <span class="muted" style="display:none" class="sub-name">${esc(ctx.rol==="admin"?ctx.adminDoc?.nombre:ctx.clienteDoc?.nombre)}</span>
-          <button class="btn-ghost" id="btnSalir">Salir</button>
-        </div>` : ``}
+      <div class="row">
+        <span class="muted" style="display:none" class="sub-name">${ctx.user?esc(ctx.rol==="admin"?ctx.adminDoc?.nombre:ctx.clienteDoc?.nombre):""}</span>
+        <button class="btn-icon" id="btnCompartirApp" title="Compartir aplicación">🔗 Compartir</button>
+        ${ctx.user ? `<button class="btn-ghost" id="btnSalir">Salir</button>` : ``}
+      </div>
     </header>`;
 
   let body = "";
@@ -368,8 +389,67 @@ function render(){
     body = viewSinRol();
   }
 
-  app.innerHTML = header + body;
+  app.innerHTML = header + body + (ctx.mostrarCompartir ? viewCompartirModal() : "");
   bindEvents();
+  if (ctx.mostrarCompartir) initQrCompartir();
+}
+
+/* ---------- COMPARTIR APP (QR + enlace + instrucciones) ---------- */
+function viewCompartirModal(){
+  return `
+  <div class="modal-overlay" id="compartirOverlay">
+    <div class="modal-box">
+      <div class="row" style="justify-content:space-between;">
+        <h2 style="margin:0;">Compartir Geofit Studio</h2>
+        <button class="btn-ghost" id="btnCerrarCompartir">✕</button>
+      </div>
+      <div class="faint" style="margin-top:4px;">Comparte este código o enlace para que instalen la app en su teléfono.</div>
+
+      <div class="qr-wrap" id="qrCompartirBox"></div>
+
+      <div class="link-copy">
+        <span id="compartirLinkTxt">${APP_URL}</span>
+        <button class="btn-primary" id="btnCopiarLink" style="white-space:nowrap;">Copiar</button>
+      </div>
+      <div id="copiarMsg" style="margin-bottom:10px;"></div>
+
+      <div class="share-steps">
+        <h3>En Android (Chrome)</h3>
+        <ol>
+          <li>Abre el enlace o escanea el código QR con la cámara.</li>
+          <li>Toca el menú ⋮ (arriba a la derecha) en Chrome.</li>
+          <li>Selecciona "Instalar aplicación" o "Agregar a pantalla de inicio".</li>
+          <li>Confirma tocando "Instalar".</li>
+        </ol>
+      </div>
+
+      <div class="share-steps">
+        <h3>En iPhone (Safari)</h3>
+        <ol>
+          <li>Abre el enlace en Safari (debe ser Safari, no otra app).</li>
+          <li>Toca el ícono de compartir (el cuadro con la flecha hacia arriba).</li>
+          <li>Selecciona "Agregar a inicio".</li>
+          <li>Toca "Agregar" arriba a la derecha.</li>
+        </ol>
+      </div>
+
+      <button class="btn-ghost" id="btnCerrarCompartir2" style="width:100%;">Cerrar</button>
+    </div>
+  </div>`;
+}
+
+function initQrCompartir(){
+  const cont = document.getElementById("qrCompartirBox");
+  if (!cont || typeof QRCode === "undefined") return;
+  cont.innerHTML = "";
+  new QRCode(cont, {
+    text: APP_URL,
+    width: 180,
+    height: 180,
+    colorDark: "#1B1D1F",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M,
+  });
 }
 
 /* ---------- LOGIN ---------- */
@@ -874,6 +954,27 @@ function bindEvents(){
   const qa = (sel) => Array.from(app.querySelectorAll(sel));
 
   const btnSalir = q("#btnSalir"); if (btnSalir) btnSalir.onclick = cerrarSesion;
+
+  // COMPARTIR APP
+  const btnCompartirApp = q("#btnCompartirApp");
+  if (btnCompartirApp) btnCompartirApp.onclick = () => { ctx.mostrarCompartir = true; render(); };
+
+  const cerrarCompartir = () => { ctx.mostrarCompartir = false; render(); };
+  const btnCerrarCompartir = q("#btnCerrarCompartir"); if (btnCerrarCompartir) btnCerrarCompartir.onclick = cerrarCompartir;
+  const btnCerrarCompartir2 = q("#btnCerrarCompartir2"); if (btnCerrarCompartir2) btnCerrarCompartir2.onclick = cerrarCompartir;
+  const compartirOverlay = q("#compartirOverlay");
+  if (compartirOverlay) compartirOverlay.onclick = (e) => { if (e.target === compartirOverlay) cerrarCompartir(); };
+
+  const btnCopiarLink = q("#btnCopiarLink");
+  if (btnCopiarLink) btnCopiarLink.onclick = async () => {
+    const msg = q("#copiarMsg");
+    try {
+      await navigator.clipboard.writeText(APP_URL);
+      if (msg) msg.innerHTML = `<div class="ok">¡Enlace copiado!</div>`;
+    } catch (err) {
+      if (msg) msg.innerHTML = `<div class="err">No se pudo copiar. Selecciona y copia el enlace manualmente.</div>`;
+    }
+  };
 
   // LOGIN
   const formLogin = q("#formLogin");
