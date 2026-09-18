@@ -172,6 +172,8 @@ function estadoPago(prox){ if(!prox) return {t:"Sin registro",c:"var(--faint)"};
   if(diff<0) return {t:"Vencido",c:"var(--danger)"}; if(diff<=7) return {t:"Próximo a vencer",c:"var(--warning)"};
   return {t:"Al día",c:"var(--accent2)"}; }
 function esc(s){ return (s||"").toString().replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmtDinero(n){ return "$" + Math.round(n||0).toLocaleString("es-ES"); }
+function nombreMes(mesKey){ const [y,m] = mesKey.split("-"); const d = new Date(Number(y), Number(m)-1, 1); return d.toLocaleDateString("es-ES",{month:"short",year:"2-digit"}); }
 function usuarioToEmail(u){ const limpio=u.trim().toLowerCase().replace(/[^a-z0-9._-]/g,""); return `${limpio}@${DOMINIO_CLIENTES}`; }
 function allSlots(){ return [...SLOTS_MANANA, ...SLOTS_TARDE, ...SLOTS_SABADO]; }
 function inicioSlot(fecha, slot){ const d = new Date(fecha+"T00:00:00"); d.setHours(slot.hora,0,0,0); return d; }
@@ -247,6 +249,7 @@ let ctx = {
   reacciones: [],
   setupExiste: null,
   adminTab: "clientes",
+  mesFinanzas: null,
   clienteTab: "reservar", // reservar | muro | top
   weekStart: mondayOf(todayStr()),
   selected: null,
@@ -417,12 +420,12 @@ function viewSinRol(){
 
 /* ---------- ADMIN ---------- */
 function viewAdmin(){
-  const tabs = [["clientes","Clientes"],["clases","Clases"],["admins","Administradores"]];
+  const tabs = [["clientes","Clientes"],["clases","Clases"],["finanzas","Finanzas"],["admins","Administradores"]];
   return `
   <div class="tabs">
     ${tabs.map(([id,label])=>`<button class="tab ${ctx.adminTab===id?"active":""}" data-admintab="${id}">${label}</button>`).join("")}
   </div>
-  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : viewAdminAdmins()}
+  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : ctx.adminTab==="finanzas" ? viewAdminFinanzas() : viewAdminAdmins()}
   `;
 }
 
@@ -577,6 +580,75 @@ function viewAdminClases(){
   <div style="margin-top:16px;">${panel}</div>
   `;
 }
+
+function viewAdminFinanzas(){
+  const pagos = ctx.clientes.flatMap(c => (c.pagos||[]).map(p=>({...p, clienteNombre:c.nombre})));
+  const porMes = {};
+  pagos.forEach(p=>{ const mes = (p.fecha||"").slice(0,7); if(mes) porMes[mes] = (porMes[mes]||0) + Number(p.monto||0); });
+
+  const mesActual = todayStr().slice(0,7);
+  const mesesConDatos = Object.keys(porMes);
+  // Aseguramos que siempre se vean los últimos 12 meses aunque no todos tengan pagos
+  const ultimos12 = [];
+  for (let i=11; i>=0; i--){
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    ultimos12.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  const maxMonto = Math.max(1, ...ultimos12.map(m=>porMes[m]||0));
+  const totalMesActual = porMes[mesActual] || 0;
+  const cantidadMesActual = pagos.filter(p=>(p.fecha||"").slice(0,7)===mesActual).length;
+
+  const mesSeleccionado = ctx.mesFinanzas || mesActual;
+  const pagosDelMes = pagos.filter(p=>(p.fecha||"").slice(0,7)===mesSeleccionado).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const totalMesSeleccionado = pagosDelMes.reduce((s,p)=>s+Number(p.monto||0),0);
+
+  const pendientes = ctx.clientes.filter(c=>{ const e = estadoPago(c.proximoPago); return e.t==="Vencido" || e.t==="Próximo a vencer"; });
+  const totalPendiente = pendientes.reduce((s,c)=>s+Number(c.montoMensualidad||0),0);
+
+  return `
+  <div class="grid" style="gap:16px;">
+    <div class="card">
+      <div class="stat-label">Ingresos de ${nombreMes(mesActual)}</div>
+      <div class="stat-value" style="font-size:34px;">${fmtDinero(totalMesActual)}</div>
+      <div class="faint" style="margin-top:4px;">${cantidadMesActual} pago${cantidadMesActual===1?"":"s"} registrado${cantidadMesActual===1?"":"s"} este mes</div>
+    </div>
+
+    <div class="card">
+      <h2>Últimos 12 meses</h2>
+      <div style="display:flex;align-items:flex-end;gap:6px;height:130px;">
+        ${ultimos12.map(m=>{
+          const monto = porMes[m]||0;
+          const alto = Math.max(3, Math.round((monto/maxMonto)*100));
+          const activo = m===mesSeleccionado;
+          return `<button data-mesfin="${m}" title="${nombreMes(m)}: ${fmtDinero(monto)}"
+            style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;background:none;border:none;cursor:pointer;padding:0;height:100%;">
+            <div style="width:100%;height:${alto}px;background:${activo?"var(--accent)":"var(--surface3)"};border-radius:4px 4px 0 0;"></div>
+            <div style="font-size:9px;color:${activo?"var(--accent)":"var(--muted)"};margin-top:4px;">${nombreMes(m)}</div>
+          </button>`;
+        }).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Detalle de ${nombreMes(mesSeleccionado)}</h2>
+      <div class="stat-value" style="margin-bottom:10px;">${fmtDinero(totalMesSeleccionado)}</div>
+      ${pagosDelMes.length===0 ? `<div class="faint">Sin pagos registrados en este mes.</div>` :
+        pagosDelMes.map(p=>`<div class="list-item"><span>${esc(p.clienteNombre)} · ${fmtFecha(p.fecha)}</span><span>${fmtDinero(p.monto)}</span></div>`).join("")}
+    </div>
+
+    <div class="card">
+      <h2>Pendiente de cobro</h2>
+      <div class="stat-value" style="color:var(--warning);">${fmtDinero(totalPendiente)}</div>
+      <div class="faint" style="margin-bottom:10px;">Suma de mensualidades de clientes vencidos o próximos a vencer.</div>
+      ${pendientes.length===0 ? `<div class="faint">No hay pagos pendientes. 🎉</div>` :
+        pendientes.map(c=>{ const e = estadoPago(c.proximoPago);
+          return `<div class="list-item"><span>${esc(c.nombre)} · <span style="color:${e.c};">${e.t}</span></span><span>${fmtDinero(c.montoMensualidad)}</span></div>`;
+        }).join("")}
+    </div>
+  </div>
+  `;
+}
+
 
 function viewAdminAdmins(){
   return `
@@ -841,6 +913,7 @@ function bindEvents(){
 
 function bindAdminEvents(q, qa){
   qa("[data-admintab]").forEach(b => b.onclick = () => { ctx.adminTab = b.dataset.admintab; ctx.selected=null; ctx.error=""; render(); });
+  qa("[data-mesfin]").forEach(b => b.onclick = () => { ctx.mesFinanzas = b.dataset.mesfin; render(); });
 
   // --- Clientes ---
   const btnNuevo = q("#btnNuevoCliente");
