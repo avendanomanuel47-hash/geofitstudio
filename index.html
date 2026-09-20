@@ -518,7 +518,7 @@ function viewAdminClientes(){
         <div>
           <div style="font-weight:800;font-size:15px;">${esc(c.nombre)}</div>
           <div class="muted" style="margin-top:2px;">Usuario de acceso: <strong style="color:var(--accent);">${esc(c.usuario||"—")}</strong></div>
-          <div class="muted" style="margin-top:2px;">${c.peso?c.peso+" kg":"Sin peso"} · ${c.altura?c.altura+" cm":"Sin altura"} · Mensualidad $${c.montoMensualidad||0}</div>
+          <div class="muted" style="margin-top:2px;">${c.peso?Number(c.peso)+" kg":"Sin peso"} · ${c.altura?Number(c.altura)+" cm":"Sin altura"} · Mensualidad ${fmtDinero(c.montoMensualidad)}</div>
           <div class="muted" style="margin-top:2px;">Tel: ${esc(c.telefono||"—")}${c.fechaNacimiento?` · Nac: ${fmtFecha(c.fechaNacimiento)}`:``}</div>
           ${esCumpleañosHoy(c.fechaNacimiento) ? `<span class="pill" style="background:rgba(255,193,69,0.18);color:var(--warning);border:1px solid rgba(255,193,69,0.4);margin-top:6px;">🎂 Hoy es su cumpleaños</span>` : ``}
           <div class="row" style="margin-top:8px;">
@@ -820,8 +820,8 @@ function viewCliente(){
       <div style="font-size:20px;font-weight:900;">${esc(c.nombre)}</div>
       ${esCumpleañosHoy(c.fechaNacimiento) ? `<div class="pill" style="background:rgba(255,193,69,0.18);color:var(--warning);border:1px solid rgba(255,193,69,0.4);margin-top:8px;">🎂 ¡Feliz cumpleaños!</div>` : ``}
       <div class="grid grid-3" style="margin-top:14px;">
-        <div><div class="stat-label">Peso</div><div class="stat-value">${c.peso?c.peso+" kg":"—"}</div></div>
-        <div><div class="stat-label">Altura</div><div class="stat-value">${c.altura?c.altura+" cm":"—"}</div></div>
+        <div><div class="stat-label">Peso</div><div class="stat-value">${c.peso?Number(c.peso)+" kg":"—"}</div></div>
+        <div><div class="stat-label">Altura</div><div class="stat-value">${c.altura?Number(c.altura)+" cm":"—"}</div></div>
         <div><div class="stat-label">IMC</div><div class="stat-value">${valor?valor.toFixed(1):"—"}</div><div style="color:${cat.c};font-size:12px;font-weight:700;">${cat.t}</div></div>
       </div>
       <div class="grid grid-2" style="margin-top:14px;">
@@ -840,7 +840,7 @@ function viewCliente(){
       <span class="pill" style="background:${pago.c}22;color:${pago.c};border:1px solid ${pago.c}55;">${pago.t}</span>
       ${c.proximoPago ? `<span class="muted" style="margin-left:8px;">Próximo pago: ${fmtFecha(c.proximoPago)}</span>` : ``}
       <div style="margin-top:12px;">
-        ${(c.pagos&&c.pagos.length) ? c.pagos.map(p=>`<div class="list-item"><span>${fmtFecha(p.fecha)}</span><span>$${p.monto}</span></div>`).join("")
+        ${(c.pagos&&c.pagos.length) ? c.pagos.map(p=>`<div class="list-item"><span>${fmtFecha(p.fecha)}</span><span>${fmtDinero(p.monto)}</span></div>`).join("")
           : `<div class="faint">Sin pagos registrados todavía.</div>`}
       </div>
     </div>
