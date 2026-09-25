@@ -141,33 +141,44 @@ const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
 const secondaryAuth = secondaryApp.auth();
 
 /* =========================================================
-   2) CONSTANTES DEL GIMNASIO
+   2) CONSTANTES DEL GIMNASIO (valores por defecto — el admin puede cambiarlos
+      desde la pestaña "Ajustes"; una vez guardados, viven en Firestore en
+      config/ajustes y estos valores solo se usan si ese documento no existe)
    ========================================================= */
-const CAPACIDAD = 5;
-// Horarios de la mañana: lunes a jueves
-const SLOTS_MANANA = [
-  { id: "h07", label: "7:00 – 8:00", hora: 7 },
-  { id: "h08", label: "8:00 – 9:00", hora: 8 },
-];
-// Horarios de la tarde: lunes a viernes
-const SLOTS_TARDE = [
-  { id: "h16", label: "16:00 – 17:00", hora: 16 },
-  { id: "h17", label: "17:00 – 18:00", hora: 17 },
-  { id: "h18", label: "18:00 – 19:00", hora: 18 },
-  { id: "h19", label: "19:00 – 20:00", hora: 19 },
-];
-// Sábado: running club + horarios de la mañana
-const SLOT_RUNNING = { id: "h06run", label: "6:00 – 7:00 · Running Club", hora: 6 };
-const SLOTS_SABADO = [
-  SLOT_RUNNING,
-  { id: "h08sab", label: "8:00 – 9:00", hora: 8 },
-  { id: "h09sab", label: "9:00 – 10:00", hora: 9 },
-];
+const DEFAULT_AJUSTES = {
+  capacidad: 5,
+  horasAnticipacion: 3,
+  // Horarios de la mañana: lunes a jueves
+  horasManana: [
+    { id: "h07", hora: 7 },
+    { id: "h08", hora: 8 },
+  ],
+  // Horarios de la tarde: lunes a viernes
+  horasTarde: [
+    { id: "h16", hora: 16 },
+    { id: "h17", hora: 17 },
+    { id: "h18", hora: 18 },
+    { id: "h19", hora: 19 },
+  ],
+  // Sábado (sin contar el running club)
+  horasSabado: [
+    { id: "h08sab", hora: 8 },
+    { id: "h09sab", hora: 9 },
+  ],
+  // Running club de sábado. null = desactivado.
+  runningClub: { id: "h06run", hora: 6 },
+};
 const DIAS_CORTO = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MAX_CLIENTES = 40;
-const HORAS_ANTICIPACION = 3;
 const DOMINIO_CLIENTES = "clientes.forja-gym.app"; // dominio ficticio para usuarios sin correo real
 const APP_URL = "https://avendanomanuel47-hash.github.io/geofitstudio/"; // enlace público para instalar la app
+
+function ajustesActuales(){ return ctx.ajustes || DEFAULT_AJUSTES; }
+function labelSlot(hora, esRunning){
+  const h = Number(hora);
+  const fmt = (x) => `${String(x%24).padStart(2,"0")}:00`;
+  return `${fmt(h)} – ${fmt(h+1)}${esRunning?" · Running Club":""}`;
+}
 
 /* =========================================================
    3) UTILIDADES
@@ -177,11 +188,15 @@ function addDays(s,n){ const d=new Date(s+"T00:00:00"); d.setDate(d.getDate()+n)
 function addMonths(s,n){ const d=new Date(s+"T00:00:00"); d.setMonth(d.getMonth()+n); return d.toISOString().slice(0,10); }
 function mondayOf(s){ const d=new Date(s+"T00:00:00"); const day=d.getDay(); const diff=day===0?-6:1-day; d.setDate(d.getDate()+diff); return d.toISOString().slice(0,10); }
 function slotsForDate(s){
+  const aj = ajustesActuales();
   const day=new Date(s+"T00:00:00").getDay();
   if(day===0) return [];               // domingo: sin clases
-  if(day===6) return SLOTS_SABADO;      // sábado
-  if(day===5) return SLOTS_TARDE;       // viernes: solo tarde
-  return [...SLOTS_MANANA, ...SLOTS_TARDE]; // lunes a jueves
+  if(day===6){                          // sábado
+    const arr = aj.runningClub ? [{...aj.runningClub, label:labelSlot(aj.runningClub.hora,true)}] : [];
+    return [...arr, ...aj.horasSabado.map(s=>({...s, label:labelSlot(s.hora)}))];
+  }
+  if(day===5) return aj.horasTarde.map(s=>({...s, label:labelSlot(s.hora)})); // viernes: solo tarde
+  return [...aj.horasManana.map(s=>({...s, label:labelSlot(s.hora)})), ...aj.horasTarde.map(s=>({...s, label:labelSlot(s.hora)}))]; // lunes a jueves
 }
 function fmtFecha(s){ return new Date(s+"T00:00:00").toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"}); }
 function imc(peso,alturaCm){ if(!peso||!alturaCm) return null; const m=alturaCm/100; return peso/(m*m); }
@@ -195,11 +210,16 @@ function esc(s){ return (s||"").toString().replace(/[&<>"']/g, c => ({"&":"&amp;
 function fmtDinero(n){ return "$" + Math.round(n||0).toLocaleString("es-ES"); }
 function nombreMes(mesKey){ const [y,m] = mesKey.split("-"); const d = new Date(Number(y), Number(m)-1, 1); return d.toLocaleDateString("es-ES",{month:"short",year:"2-digit"}); }
 function usuarioToEmail(u){ const limpio=u.trim().toLowerCase().replace(/[^a-z0-9._-]/g,""); return `${limpio}@${DOMINIO_CLIENTES}`; }
-function allSlots(){ return [...SLOTS_MANANA, ...SLOTS_TARDE, ...SLOTS_SABADO]; }
+function allSlots(){
+  const aj = ajustesActuales();
+  return [...(aj.runningClub?[aj.runningClub]:[]), ...aj.horasManana, ...aj.horasTarde, ...aj.horasSabado]
+    .map(s=>({...s, label:labelSlot(s.hora, aj.runningClub && s.id===aj.runningClub.id)}));
+}
 function inicioSlot(fecha, slot){ const d = new Date(fecha+"T00:00:00"); d.setHours(slot.hora,0,0,0); return d; }
 function faltaAnticipacion(fecha, slot){
-  const limite = new Date(Date.now() + HORAS_ANTICIPACION*60*60*1000);
+  const limite = new Date(Date.now() + ajustesActuales().horasAnticipacion*60*60*1000);
   return inicioSlot(fecha, slot) < limite;
+
 }
 
 // --- Rachas, insignias y cumpleaños ---
@@ -275,6 +295,8 @@ let ctx = {
   selected: null,
   error: "",
   mostrarCompartir: false,
+  ajustes: null,
+  editandoAjustes: false,
 };
 let unsubs = [];
 function limpiarListeners(){ unsubs.forEach(u=>u&&u()); unsubs=[]; }
@@ -330,6 +352,9 @@ function suscribirAdmin(){
   unsubs.push(db.collection("perfiles").onSnapshot(qs=>{
     ctx.perfiles = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
   }));
+  unsubs.push(db.collection("config").doc("ajustes").onSnapshot(d=>{
+    ctx.ajustes = d.exists ? d.data() : null; render();
+  }));
 }
 function suscribirCliente(){
   unsubs.push(db.collection("clientes").doc(ctx.user.uid).onSnapshot(d=>{
@@ -348,6 +373,9 @@ function suscribirCliente(){
   }));
   unsubs.push(db.collection("reacciones").onSnapshot(qs=>{
     ctx.reacciones = qs.docs.map(d=>({id:d.id, ...d.data()})); render();
+  }));
+  unsubs.push(db.collection("config").doc("ajustes").onSnapshot(d=>{
+    ctx.ajustes = d.exists ? d.data() : null; render();
   }));
 }
 
@@ -500,12 +528,12 @@ function viewSinRol(){
 
 /* ---------- ADMIN ---------- */
 function viewAdmin(){
-  const tabs = [["clientes","Clientes"],["clases","Clases"],["finanzas","Finanzas"],["admins","Administradores"]];
+  const tabs = [["clientes","Clientes"],["clases","Clases"],["finanzas","Finanzas"],["ajustes","Ajustes"],["admins","Administradores"]];
   return `
   <div class="tabs">
     ${tabs.map(([id,label])=>`<button class="tab ${ctx.adminTab===id?"active":""}" data-admintab="${id}">${label}</button>`).join("")}
   </div>
-  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : ctx.adminTab==="finanzas" ? viewAdminFinanzas() : viewAdminAdmins()}
+  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : ctx.adminTab==="finanzas" ? viewAdminFinanzas() : ctx.adminTab==="ajustes" ? viewAdminAjustes() : viewAdminAdmins()}
   `;
 }
 
@@ -601,10 +629,10 @@ function viewAdminClases(){
         </div>
         <div class="slot-list">
           ${slots.map(s=>{
-            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD; const ocupado = n>0 && !lleno;
+            const n = contar(fecha,s.id); const lleno = n>=ajustesActuales().capacidad; const ocupado = n>0 && !lleno;
             const activa = ctx.selected && ctx.selected.fecha===fecha && ctx.selected.slotId===s.id;
             return `<button class="slot-btn ${activa?"active":""} ${lleno?"full":""} ${ocupado?"ocupado":""}" data-fecha="${fecha}" data-slot="${s.id}" data-label="${s.label}">
-              <div>${s.label}</div><div class="slot-count" style="color:${activa?"#1B1D1F":lleno?"var(--danger)":ocupado?"var(--accent)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
+              <div>${s.label}</div><div class="slot-count" style="color:${activa?"#1B1D1F":lleno?"var(--danger)":ocupado?"var(--accent)":"var(--muted)"};">${n}/${ajustesActuales().capacidad}</div>
             </button>`;
           }).join("")}
         </div>
@@ -730,6 +758,48 @@ function viewAdminFinanzas(){
 }
 
 
+function horasToStr(arr){ return (arr||[]).map(x=>x.hora).join(", "); }
+function strToHoras(str, sufijoId){
+  return str.split(",").map(x=>x.trim()).filter(x=>x!=="").map(x=>Number(x)).filter(x=>!isNaN(x) && x>=0 && x<24)
+    .sort((a,b)=>a-b).map(h=>({ id:`h${h}${sufijoId||""}`, hora:h }));
+}
+
+function viewAdminAjustes(){
+  const aj = ajustesActuales();
+  return `
+  <div class="card" style="max-width:520px;">
+    <h2>Ajustes del gimnasio</h2>
+    <div class="faint" style="margin-bottom:14px;">Estos cambios aplican de inmediato para todos, sin tocar código.</div>
+    <form id="formAjustes" class="grid" style="gap:14px;">
+      <div class="grid grid-2">
+        <div><label>Cupo por clase</label><input id="ajCapacidad" type="number" min="1" value="${aj.capacidad}" required /></div>
+        <div><label>Horas mínimas de anticipación</label><input id="ajAnticipacion" type="number" min="0" value="${aj.horasAnticipacion}" required /></div>
+      </div>
+      <div>
+        <label>Horas de clase — Lunes a Jueves (mañana)</label>
+        <input id="ajManana" value="${horasToStr(aj.horasManana)}" placeholder="ej. 7, 8" />
+      </div>
+      <div>
+        <label>Horas de clase — Lunes a Viernes (tarde)</label>
+        <input id="ajTarde" value="${horasToStr(aj.horasTarde)}" placeholder="ej. 16, 17, 18, 19" />
+      </div>
+      <div>
+        <label>Horas de clase — Sábado</label>
+        <input id="ajSabado" value="${horasToStr(aj.horasSabado)}" placeholder="ej. 8, 9" />
+      </div>
+      <div class="row" style="align-items:center;gap:10px;">
+        <input id="ajRunningActivo" type="checkbox" style="width:auto;" ${aj.runningClub?"checked":""} />
+        <label style="margin:0;">Running Club los sábados a las</label>
+        <input id="ajRunningHora" type="number" min="0" max="23" value="${aj.runningClub?aj.runningClub.hora:6}" style="width:70px;" />
+      </div>
+      <div class="faint">Escribe las horas separadas por coma (formato 24h). Ej: "16, 17, 18" crea 3 clases de una hora cada una, empezando a esas horas.</div>
+      ${ctx.error ? `<div class="err">${esc(ctx.error)}</div>` : ``}
+      ${ctx.ajustesGuardado ? `<div class="ok">Ajustes guardados correctamente.</div>` : ``}
+      <button class="btn-primary" type="submit">Guardar ajustes</button>
+    </form>
+  </div>`;
+}
+
 function viewAdminAdmins(){
   return `
   <div class="row" style="justify-content:space-between;margin-bottom:14px;">
@@ -778,7 +848,7 @@ function viewCliente(){
         </div>
         <div class="slot-list">
           ${slots.map(s=>{
-            const n = contar(fecha,s.id); const lleno = n>=CAPACIDAD; const ocupado = n>0 && !lleno;
+            const n = contar(fecha,s.id); const lleno = n>=ajustesActuales().capacidad; const ocupado = n>0 && !lleno;
             const esMia = ctx.asignaciones.some(a=>a.clienteId===c.id && a.fecha===fecha && a.slotId===s.id);
             const activa = ctx.selected && ctx.selected.fecha===fecha && ctx.selected.slotId===s.id;
             const muyPronto = !esMia && faltaAnticipacion(fecha, s);
@@ -787,8 +857,8 @@ function viewCliente(){
               ${bloqueado?"disabled":""}
               data-fecha="${fecha}" data-slot="${s.id}" data-label="${s.label}">
               <div>${s.label}${esMia?" ✓":""}</div>
-              <div class="slot-count" style="color:${activa?"#1B1D1F":lleno&&!esMia?"var(--danger)":ocupado&&!esMia?"var(--accent)":"var(--muted)"};">${n}/${CAPACIDAD}</div>
-              ${muyPronto ? `<div style="font-size:9px;color:var(--faint);margin-top:2px;">Requiere ${HORAS_ANTICIPACION}h de anticipación</div>` : ``}
+              <div class="slot-count" style="color:${activa?"#1B1D1F":lleno&&!esMia?"var(--danger)":ocupado&&!esMia?"var(--accent)":"var(--muted)"};">${n}/${ajustesActuales().capacidad}</div>
+              ${muyPronto ? `<div style="font-size:9px;color:var(--faint);margin-top:2px;">Requiere ${ajustesActuales().horasAnticipacion}h de anticipación</div>` : ``}
             </button>`;
           }).join("")}
         </div>
@@ -835,6 +905,8 @@ function viewCliente(){
       </div>` : ``}
     </div>
 
+    ${viewMiProgreso(c)}
+
     <div class="card">
       <h2>Estado de pago</h2>
       <span class="pill" style="background:${pago.c}22;color:${pago.c};border:1px solid ${pago.c}55;">${pago.t}</span>
@@ -876,7 +948,7 @@ function viewCliente(){
       ${board}
       ${panel}
       <div class="faint" style="margin-top:10px;">Máximo 1 clase por día. Las casillas marcadas con ✓ son tus reservas.
-        Las reservas requieren mínimo ${HORAS_ANTICIPACION} horas de anticipación.</div>
+        Las reservas requieren mínimo ${ajustesActuales().horasAnticipacion} horas de anticipación.</div>
     </div>
 
     <div class="card">
@@ -892,6 +964,47 @@ function viewCliente(){
     </div>
   </div>
   `;
+}
+
+function svgProgresoPeso(entradas){
+  if (entradas.length < 2) return "";
+  const W = 600, H = 160, padX = 10, padY = 20;
+  const pesos = entradas.map(e=>Number(e.peso));
+  const min = Math.min(...pesos), max = Math.max(...pesos);
+  const rango = (max - min) || 1;
+  const puntos = entradas.map((e,i)=>{
+    const x = padX + (i/(entradas.length-1)) * (W - padX*2);
+    const y = H - padY - ((Number(e.peso)-min)/rango) * (H - padY*2);
+    return [x,y];
+  });
+  const linea = puntos.map(p=>p.join(",")).join(" ");
+  const circulos = puntos.map((p,i)=>`<circle cx="${p[0]}" cy="${p[1]}" r="3.5" fill="${i===puntos.length-1?"#22C1E8":"#9AA0A6"}" />`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:140px;" preserveAspectRatio="none">
+    <polyline points="${linea}" fill="none" stroke="#22C1E8" stroke-width="2.5" vector-effect="non-scaling-stroke" />
+    ${circulos}
+  </svg>`;
+}
+
+function viewMiProgreso(c){
+  const historial = (c.historialPeso||[]).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  const ultimos = historial.slice(-12);
+  const primero = historial[0], ultimo = historial[historial.length-1];
+  const diferencia = primero && ultimo ? (Number(ultimo.peso) - Number(primero.peso)) : null;
+  return `
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <h2 style="margin:0;">Mi progreso de peso</h2>
+      <button class="btn-ghost" id="btnAbrirRegistroPeso">+ Registrar peso</button>
+    </div>
+    <div id="formRegistroPeso"></div>
+    ${historial.length===0 ? `<div class="faint" style="margin-top:10px;">Todavía no has registrado tu peso. Empieza hoy para ver tu evolución aquí.</div>` : `
+      <div style="margin-top:12px;">${svgProgresoPeso(ultimos)}</div>
+      ${diferencia!==null ? `<div class="faint" style="margin-top:6px;">Desde tu primer registro (${fmtFecha(primero.fecha)}): <strong style="color:${diferencia<=0?"var(--accent2)":"var(--warning)"};">${diferencia>0?"+":""}${diferencia.toFixed(1)} kg</strong></div>` : ``}
+      <div style="margin-top:12px;display:flex;flex-direction:column-reverse;gap:6px;">
+        ${historial.slice(-6).map(e=>`<div class="list-item"><span>${fmtFecha(e.fecha)}</span><span>${Number(e.peso)} kg</span></div>`).join("")}
+      </div>
+    `}
+  </div>`;
 }
 
 function viewMuro(c){
@@ -1015,6 +1128,33 @@ function bindEvents(){
 function bindAdminEvents(q, qa){
   qa("[data-admintab]").forEach(b => b.onclick = () => { ctx.adminTab = b.dataset.admintab; ctx.selected=null; ctx.error=""; render(); });
   qa("[data-mesfin]").forEach(b => b.onclick = () => { ctx.mesFinanzas = b.dataset.mesfin; render(); });
+
+  const formAjustes = q("#formAjustes");
+  if (formAjustes) formAjustes.onsubmit = async (e) => {
+    e.preventDefault();
+    ctx.error = ""; ctx.ajustesGuardado = false;
+    const capacidad = Number(q("#ajCapacidad").value);
+    const horasAnticipacion = Number(q("#ajAnticipacion").value);
+    if (!capacidad || capacidad < 1) { ctx.error = "El cupo por clase debe ser al menos 1."; return render(); }
+    if (horasAnticipacion < 0) { ctx.error = "Las horas de anticipación no pueden ser negativas."; return render(); }
+    const horasManana = strToHoras(q("#ajManana").value);
+    const horasTarde = strToHoras(q("#ajTarde").value);
+    const horasSabado = strToHoras(q("#ajSabado").value, "sab");
+    const runningActivo = q("#ajRunningActivo").checked;
+    const runningHora = Number(q("#ajRunningHora").value);
+    const nuevoAjustes = {
+      capacidad, horasAnticipacion, horasManana, horasTarde, horasSabado,
+      runningClub: runningActivo ? { id: `h${runningHora}run`, hora: runningHora } : null,
+    };
+    try {
+      await db.collection("config").doc("ajustes").set(nuevoAjustes);
+      ctx.ajustesGuardado = true;
+      render();
+    } catch (err) {
+      ctx.error = "No se pudieron guardar los ajustes: " + (err.message || err);
+      render();
+    }
+  };
 
   // --- Clientes ---
   const btnNuevo = q("#btnNuevoCliente");
@@ -1177,6 +1317,31 @@ function bindNuevoClienteForm(q){
 function bindClienteEvents(q, qa){
   qa("[data-clientetab]").forEach(b => b.onclick = () => { ctx.clienteTab = b.dataset.clientetab; ctx.selected=null; ctx.error=""; render(); });
 
+  const btnAbrirPeso = q("#btnAbrirRegistroPeso");
+  if (btnAbrirPeso) btnAbrirPeso.onclick = () => {
+    q("#formRegistroPeso").innerHTML = `
+      <div class="row" style="margin-top:12px;align-items:end;">
+        <div style="flex:1;min-width:120px;"><label>Fecha</label><input id="rpFecha" type="date" value="${todayStr()}" max="${todayStr()}" /></div>
+        <div style="flex:1;min-width:100px;"><label>Peso (kg)</label><input id="rpPeso" type="number" step="0.1" min="1" /></div>
+        <button class="btn-primary" id="rpGuardar">Guardar</button>
+      </div>
+      <div id="rpError"></div>`;
+    q("#rpGuardar").onclick = async () => {
+      const fecha = q("#rpFecha").value;
+      const peso = Number(q("#rpPeso").value);
+      if (!fecha || !peso || peso<=0) { q("#rpError").innerHTML = `<div class="err">Ingresa una fecha y un peso válidos.</div>`; return; }
+      try {
+        await db.collection("clientes").doc(ctx.user.uid).update({
+          peso,
+          historialPeso: firebase.firestore.FieldValue.arrayUnion({ fecha, peso }),
+        });
+        q("#formRegistroPeso").innerHTML = "";
+      } catch (err) {
+        q("#rpError").innerHTML = `<div class="err">No se pudo guardar: ${esc(err.message||String(err))}</div>`;
+      }
+    };
+  };
+
   const btnSemAnt = q("#btnSemAnt"); if (btnSemAnt) btnSemAnt.onclick = () => { ctx.weekStart = addDays(ctx.weekStart,-7); render(); };
   const btnSemSig = q("#btnSemSig"); if (btnSemSig) btnSemSig.onclick = () => { ctx.weekStart = addDays(ctx.weekStart,7); render(); };
   const btnHoy = q("#btnHoy"); if (btnHoy) btnHoy.onclick = () => { ctx.weekStart = mondayOf(todayStr()); render(); };
@@ -1219,11 +1384,11 @@ async function intentarReservar(clienteId, fecha, slotId, creadoPor){
   const yaTiene = ctx.asignaciones.some(a=>a.clienteId===clienteId && a.fecha===fecha);
   if (yaTiene) return { ok:false, msg:"Ese cliente ya tiene una clase asignada ese día (máximo 1 diaria)." };
   const enSlot = ctx.asignaciones.filter(a=>a.fecha===fecha && a.slotId===slotId).length;
-  if (enSlot >= CAPACIDAD) return { ok:false, msg:"Ese horario ya alcanzó su capacidad máxima." };
+  if (enSlot >= ajustesActuales().capacidad) return { ok:false, msg:"Ese horario ya alcanzó su capacidad máxima." };
   if (creadoPor === "cliente") {
     const slot = allSlots().find(s=>s.id===slotId);
     if (slot && faltaAnticipacion(fecha, slot)) {
-      return { ok:false, msg:`Las reservas requieren al menos ${HORAS_ANTICIPACION} horas de anticipación.` };
+      return { ok:false, msg:`Las reservas requieren al menos ${ajustesActuales().horasAnticipacion} horas de anticipación.` };
     }
   }
   try {
