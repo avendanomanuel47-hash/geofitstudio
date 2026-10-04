@@ -528,12 +528,12 @@ function viewSinRol(){
 
 /* ---------- ADMIN ---------- */
 function viewAdmin(){
-  const tabs = [["clientes","Clientes"],["clases","Clases"],["finanzas","Finanzas"],["ajustes","Ajustes"],["admins","Administradores"]];
+  const tabs = [["clientes","Clientes"],["clases","Clases"],["finanzas","Finanzas"],["top10","Top 10"],["ajustes","Ajustes"],["admins","Administradores"]];
   return `
   <div class="tabs">
     ${tabs.map(([id,label])=>`<button class="tab ${ctx.adminTab===id?"active":""}" data-admintab="${id}">${label}</button>`).join("")}
   </div>
-  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : ctx.adminTab==="finanzas" ? viewAdminFinanzas() : ctx.adminTab==="ajustes" ? viewAdminAjustes() : viewAdminAdmins()}
+  ${ctx.adminTab==="clientes" ? viewAdminClientes() : ctx.adminTab==="clases" ? viewAdminClases() : ctx.adminTab==="finanzas" ? viewAdminFinanzas() : ctx.adminTab==="top10" ? viewTop10() : ctx.adminTab==="ajustes" ? viewAdminAjustes() : viewAdminAdmins()}
   `;
 }
 
@@ -568,6 +568,7 @@ function viewAdminClientes(){
   }).join("");
 
   return `
+  ${viewTop10()}
   <div class="row" style="justify-content:space-between;margin-bottom:14px;">
     <div class="muted"><strong style="color:var(--text);font-size:17px;">${ctx.clientes.length}</strong> / ${MAX_CLIENTES} clientes registrados</div>
     <div class="row">
