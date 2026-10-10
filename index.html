@@ -290,6 +290,7 @@ let ctx = {
   setupExiste: null,
   adminTab: "clientes",
   mesFinanzas: null,
+  pagosAbiertos: {},
   clienteTab: "reservar", // reservar | muro | top
   weekStart: mondayOf(todayStr()),
   selected: null,
@@ -562,8 +563,20 @@ function viewAdminClientes(){
       </div>
       <div data-editform="${c.id}"></div>
       <div data-pagoform="${c.id}"></div>
-      ${c.pagos && c.pagos.length ? `<div class="faint" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-        Últimos pagos: ${c.pagos.slice(0,3).map(p=>fmtFecha(p.fecha)+" ($"+p.monto+")").join("  ·  ")}</div>` : ``}
+      ${c.pagos && c.pagos.length ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div class="row" style="justify-content:space-between;">
+          <span class="faint">${c.pagos.length} pago${c.pagos.length===1?"":"s"} registrado${c.pagos.length===1?"":"s"} · último: ${fmtFecha(c.pagos.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha))[0].fecha)}</span>
+          <button class="btn-ghost" data-togglepagos="${c.id}">${ctx.pagosAbiertos[c.id]?"Ocultar pagos":"Ver / borrar pagos"}</button>
+        </div>
+        ${ctx.pagosAbiertos[c.id] ? `<div style="margin-top:10px;">
+          ${c.pagos.map((p,i)=>({p,i})).sort((a,b)=>b.p.fecha.localeCompare(a.p.fecha)).map(({p,i})=>`
+            <div class="list-item">
+              <span>${fmtFecha(p.fecha)}</span>
+              <span style="margin-left:auto;margin-right:10px;">${fmtDinero(p.monto)}</span>
+              <button class="btn-danger" style="padding:6px 10px;" data-delpago="${c.id}" data-idx="${i}">Borrar</button>
+            </div>`).join("")}
+        </div>` : ``}
+      </div>` : ``}
     </div>`;
   }).join("");
 
@@ -1201,6 +1214,31 @@ function bindAdminEvents(q, qa){
       await batch.commit();
       holder.innerHTML = "";
     };
+  });
+
+  qa("[data-togglepagos]").forEach(b => b.onclick = () => {
+    const id = b.dataset.togglepagos;
+    ctx.pagosAbiertos[id] = !ctx.pagosAbiertos[id];
+    render();
+  });
+
+  qa("[data-delpago]").forEach(b => b.onclick = async () => {
+    const c = ctx.clientes.find(x=>x.id===b.dataset.delpago);
+    const idx = Number(b.dataset.idx);
+    if (!c || !c.pagos || !c.pagos[idx]) return;
+    const pago = c.pagos[idx];
+    if (!confirm(`¿Borrar el pago de ${fmtDinero(pago.monto)} del ${fmtFecha(pago.fecha)} de ${c.nombre}? Esta acción no se puede deshacer.`)) return;
+    const restantes = c.pagos.filter((_,i)=>i!==idx);
+    // El próximo pago se recalcula a partir del pago más reciente que quede (o queda sin registro).
+    const masReciente = restantes.map(x=>x.fecha).sort().pop();
+    try {
+      await db.collection("clientes").doc(c.id).update({
+        pagos: restantes,
+        proximoPago: masReciente ? addMonths(masReciente,1) : null,
+      });
+    } catch (err) {
+      alert("No se pudo borrar el pago: " + (err.message || err));
+    }
   });
 
   qa("[data-pagocliente]").forEach(b => b.onclick = () => {
