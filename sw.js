@@ -1,8 +1,41 @@
-// Service worker mínimo: solo lo necesario para que Android permita "Instalar app".
-// No cachea nada de forma agresiva, para evitar que los clientes vean datos viejos.
-self.addEventListener("install", (e) => { self.skipWaiting(); });
-self.addEventListener("activate", (e) => { self.clients.claim(); });
-self.addEventListener("fetch", (e) => {
-  // Deja pasar todas las peticiones directo a la red (sin caché de datos de Firebase).
-  e.respondWith(fetch(e.request));
+const CACHE = 'autocheck-v11';
+const ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
+];
+
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', e => {
+  // Only handle same-origin GET requests
+  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (url.origin !== location.origin) return;
+
+  e.respondWith(
+    caches.match(e.request).then(cached => {
+      if (cached) return cached;
+      return fetch(e.request).then(resp => {
+        if (!resp || resp.status !== 200 || resp.type !== 'basic') return resp;
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return resp;
+      }).catch(() => caches.match('./index.html'));
+    })
+  );
 });
