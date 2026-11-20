@@ -169,6 +169,8 @@ const DEFAULT_AJUSTES = {
   runningClub: { id: "h06run", hora: 6 },
 };
 const DIAS_CORTO = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+// Versión de la app. Súbela (junto con version.json) cada vez que publiques cambios.
+const APP_VERSION = "1.2.0";
 const MAX_CLIENTES = 40;
 const DOMINIO_CLIENTES = "clientes.forja-gym.app"; // dominio ficticio para usuarios sin correo real
 const APP_URL = "https://avendanomanuel47-hash.github.io/geofitstudio/"; // enlace público para instalar la app
@@ -418,7 +420,12 @@ function render(){
     body = viewSinRol();
   }
 
-  app.innerHTML = header + body + (ctx.mostrarCompartir ? viewCompartirModal() : "");
+  const pie = `<div style="text-align:center;margin:28px 0 8px;" class="faint">
+    Geofit Studio · Versión ${APP_VERSION}
+    <div style="margin-top:8px;"><button class="btn-ghost" id="btnBuscarAct" style="padding:6px 12px;">Buscar actualización</button>
+    <div id="msgAct" style="margin-top:6px;"></div></div>
+  </div>`;
+  app.innerHTML = header + body + pie + (ctx.mostrarCompartir ? viewCompartirModal() : "");
   bindEvents();
   if (ctx.mostrarCompartir) initQrCompartir();
 }
@@ -820,7 +827,10 @@ function viewAdminAdmins(){
     <button class="btn-primary" id="btnNuevoAdmin">+ Nuevo administrador</button>
   </div>
   <div id="formNuevoAdmin"></div>
-  ${ctx.admins.map(a=>`<div class="card"><strong>${esc(a.nombre)}</strong>${a.id===ctx.user.uid?` <span class="faint">(tú)</span>`:``}</div>`).join("")}
+  ${ctx.admins.map(a=>`<div class="card"><div class="row" style="justify-content:space-between;">
+    <div><strong>${esc(a.nombre)}</strong>${a.id===ctx.user.uid?` <span class="faint">(tú)</span>`:``}</div>
+    ${a.id!==ctx.user.uid && ctx.admins.length>1 ? `<button class="btn-danger" data-deladmin="${a.id}">Eliminar</button>` : ``}
+  </div></div>`).join("")}
   <div style="margin-top:20px;">
     <h2>Mi cuenta</h2>
     <div id="cambiarPassAdmin"></div>
@@ -1080,6 +1090,15 @@ function bindEvents(){
   const qa = (sel) => Array.from(app.querySelectorAll(sel));
 
   const btnSalir = q("#btnSalir"); if (btnSalir) btnSalir.onclick = cerrarSesion;
+  const btnAct = q("#btnBuscarAct");
+  if (btnAct) btnAct.onclick = async () => {
+    const msg = q("#msgAct");
+    msg.innerHTML = `<span class="faint">Buscando…</span>`;
+    const r = await buscarActualizacion();
+    if (r === "nueva") msg.innerHTML = "";
+    else if (r === "al_dia") msg.innerHTML = `<span class="ok">Ya tienes la última versión.</span>`;
+    else msg.innerHTML = `<span class="err">No se pudo comprobar. Revisa tu conexión.</span>`;
+  };
 
   // COMPARTIR APP
   const btnCompartirApp = q("#btnCompartirApp");
@@ -1182,8 +1201,20 @@ function bindAdminEvents(q, qa){
   };
 
   qa("[data-delcliente]").forEach(b => b.onclick = async () => {
-    if (!confirm("¿Eliminar este cliente? (Su cuenta de acceso deberá eliminarse también desde Firebase Authentication)")) return;
-    await db.collection("clientes").doc(b.dataset.delcliente).delete();
+    const id = b.dataset.delcliente;
+    const c = ctx.clientes.find(x=>x.id===id);
+    if (!c) return;
+    if (!confirm(`¿Eliminar a ${c.nombre}?\n\nSe borrarán su perfil, sus pagos, sus reservas y su historial de asistencias. Esta acción no se puede deshacer.\n\nNota: su usuario de acceso ("${c.usuario||"—"}") seguirá existiendo en Firebase Authentication; para poder reutilizar ese mismo usuario con otro cliente hay que eliminarlo también desde allí.`)) return;
+    try {
+      const batch = db.batch();
+      batch.delete(db.collection("clientes").doc(id));
+      batch.delete(db.collection("perfiles").doc(id));
+      ctx.asignaciones.filter(a=>a.clienteId===id).forEach(a=>batch.delete(db.collection("asignaciones").doc(a.id)));
+      await batch.commit();
+      delete ctx.pagosAbiertos[id];
+    } catch (err) {
+      alert("No se pudo eliminar el cliente: " + (err.message || err));
+    }
   });
 
   qa("[data-editcliente]").forEach(b => b.onclick = () => {
@@ -1286,6 +1317,20 @@ function bindAdminEvents(q, qa){
   };
 
   // --- Administradores ---
+  qa("[data-deladmin]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.deladmin;
+    const a = ctx.admins.find(x=>x.id===id);
+    if (!a) return;
+    if (id === ctx.user.uid) { alert("No puedes eliminar tu propia cuenta de administrador."); return; }
+    if (ctx.admins.length <= 1) { alert("Debe quedar al menos un administrador."); return; }
+    if (!confirm(`¿Eliminar al administrador ${a.nombre}?\n\nPerderá de inmediato el acceso al panel. Su correo seguirá existiendo en Firebase Authentication, pero sin ningún permiso; puedes eliminarlo también desde allí.`)) return;
+    try {
+      await db.collection("admins").doc(id).delete();
+    } catch (err) {
+      alert("No se pudo eliminar al administrador: " + (err.message || err));
+    }
+  });
+
   const btnNuevoAdmin = q("#btnNuevoAdmin");
   if (btnNuevoAdmin) btnNuevoAdmin.onclick = () => {
     q("#formNuevoAdmin").innerHTML = `
@@ -1466,6 +1511,58 @@ function renderCambiarPassword(holder){
     };
   };
 }
+
+/* =========================================================
+   ACTUALIZACIONES: compara la versión de esta app con version.json
+   (siempre se pide a la red, sin caché) y avisa si hay una más nueva.
+   ========================================================= */
+function versionMayor(a, b){ // true si a > b (formato 1.2.3)
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i=0;i<3;i++){ const x=pa[i]||0, y=pb[i]||0; if (x>y) return true; if (x<y) return false; }
+  return false;
+}
+let versionRemota = null;
+async function buscarActualizacion(){
+  try {
+    const res = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return "error";
+    const data = await res.json();
+    if (data && data.version && versionMayor(data.version, APP_VERSION)) {
+      versionRemota = data.version;
+      mostrarAvisoActualizacion(data.version);
+      return "nueva";
+    }
+    return "al_dia";
+  } catch (e) { return "error"; }
+}
+function mostrarAvisoActualizacion(v){
+  if (document.getElementById("avisoAct")) return;
+  const bar = document.createElement("div");
+  bar.id = "avisoAct";
+  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:50;background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;justify-content:space-between;box-shadow:0 6px 24px rgba(0,0,0,0.5);";
+  bar.innerHTML = `<div style="font-size:13px;"><strong>Nueva versión disponible</strong><div class="faint" style="font-size:11px;">Versión ${esc(v)} (tienes la ${esc(APP_VERSION)})</div></div>
+    <button class="btn-primary" id="btnAplicarAct">Actualizar</button>`;
+  document.body.appendChild(bar);
+  document.getElementById("btnAplicarAct").onclick = aplicarActualizacion;
+}
+async function aplicarActualizacion(){
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) {}
+  // El parámetro obliga al navegador a pedir la página de nuevo en vez de usar una copia guardada.
+  location.replace(location.pathname + "?v=" + encodeURIComponent(versionRemota || Date.now()));
+}
+// Comprobar al abrir, al volver a la app y cada 10 minutos.
+window.addEventListener("load", () => setTimeout(buscarActualizacion, 3000));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") buscarActualizacion(); });
+setInterval(buscarActualizacion, 10 * 60 * 1000);
 
 // Registro del service worker: habilita el "Instalar app" en Android.
 if ("serviceWorker" in navigator) {

@@ -1,8 +1,12 @@
-// Service worker mínimo: solo lo necesario para que Android permita "Instalar app".
-// No cachea nada de forma agresiva, para evitar que los clientes vean datos viejos.
+// Service worker mínimo: lo necesario para que Android permita "Instalar app".
+// No guarda copias de datos. Las páginas se revalidan siempre con el servidor,
+// así una versión nueva publicada llega a los usuarios sin quedarse atascada en caché.
 self.addEventListener("install", (e) => { self.skipWaiting(); });
 self.addEventListener("activate", (e) => { self.clients.claim(); });
 self.addEventListener("fetch", (e) => {
-  // Deja pasar todas las peticiones directo a la red (sin caché de datos de Firebase).
-  e.respondWith(fetch(e.request));
+  if (e.request.mode === "navigate") {
+    e.respondWith(fetch(e.request, { cache: "no-cache" }).catch(() => fetch(e.request)));
+  } else {
+    e.respondWith(fetch(e.request));
+  }
 });
