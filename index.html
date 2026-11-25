@@ -228,6 +228,30 @@ function faltaAnticipacion(fecha, slot){
 function totalAsistencias(clienteId){
   return ctx.asignaciones.filter(a=>a.clienteId===clienteId && a.asistio===true).length;
 }
+// --- Top 10: periodos ---
+const PERIODOS_TOP = [
+  { id:"todo", label:"Histórico" },
+  { id:"mes", label:"Mes" },
+  { id:"trimestre", label:"Trimestre" },
+  { id:"semestre", label:"Semestre" },
+  { id:"anio", label:"Año" },
+];
+function inicioPeriodoTop(periodo, hoyStr){
+  if (periodo === "todo") return null;
+  const hoy = hoyStr || todayStr();
+  const y = Number(hoy.slice(0,4));
+  const m = Number(hoy.slice(5,7)) - 1;
+  if (periodo === "mes") return `${y}-${String(m+1).padStart(2,"0")}-01`;
+  if (periodo === "trimestre") return `${y}-${String(Math.floor(m/3)*3+1).padStart(2,"0")}-01`;
+  if (periodo === "semestre") return `${y}-${String(Math.floor(m/6)*6+1).padStart(2,"0")}-01`;
+  if (periodo === "anio") return `${y}-01-01`;
+  return null;
+}
+function labelPeriodoTop(periodo){
+  const desde = inicioPeriodoTop(periodo);
+  if (!desde) return "Desde el inicio de la app, hasta hoy";
+  return `Desde ${fmtFecha(desde)} hasta hoy`;
+}
 function calcularRacha(clienteId){
   const semanas = new Set(ctx.asignaciones.filter(a=>a.clienteId===clienteId && a.asistio===true).map(a=>mondayOf(a.fecha)));
   let racha = 0, semana = mondayOf(todayStr());
@@ -294,6 +318,7 @@ let ctx = {
   mesFinanzas: null,
   pagosAbiertos: {},
   clienteTab: "reservar", // reservar | muro | top
+  topPeriodo: "todo",     // todo | mes | trimestre | semestre | anio
   weekStart: mondayOf(todayStr()),
   selected: null,
   error: "",
@@ -1063,22 +1088,29 @@ function viewMuro(c){
 }
 
 function viewTop10(){
+  const periodo = ctx.topPeriodo || "todo";
+  const desde = inicioPeriodoTop(periodo);
   const conteo = {};
-  ctx.asignaciones.filter(a=>a.asistio===true).forEach(a=>{ conteo[a.clienteId] = (conteo[a.clienteId]||0) + 1; });
+  ctx.asignaciones.filter(a=>a.asistio===true && (!desde || a.fecha >= desde)).forEach(a=>{ conteo[a.clienteId] = (conteo[a.clienteId]||0) + 1; });
   const ranking = Object.entries(conteo).map(([clienteId,total])=>({clienteId, total, nombre: nombrePerfil(clienteId)}))
     .sort((a,b)=>b.total-a.total).slice(0,10);
   const medallas = ["🥇","🥈","🥉"];
   return `
   <div class="card">
     <h2>Top 10 · Asistencia verificada</h2>
-    ${ranking.length===0 ? `<div class="faint">Todavía no hay asistencias verificadas.</div>` :
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      ${PERIODOS_TOP.map(p=>`<button class="btn-ghost" data-topperiodo="${p.id}"
+        style="padding:5px 11px;font-size:12px;${p.id===periodo?`background:rgba(34,193,232,0.2);border-color:var(--accent);`:``}">${p.label}</button>`).join("")}
+    </div>
+    <div class="faint" style="margin-bottom:10px;">${labelPeriodoTop(periodo)}</div>
+    ${ranking.length===0 ? `<div class="faint">Todavía no hay asistencias verificadas en este periodo.</div>` :
       ranking.map((r,i)=>`
       <div class="list-item">
         <span style="width:26px;">${medallas[i]||(i+1)+"."}</span>
         <span style="flex:1;">${esc(r.nombre)} ${mejorInsignia(r.clienteId)}</span>
         <span style="color:var(--accent);font-weight:900;">${r.total}</span>
       </div>`).join("")}
-    <div class="faint" style="margin-top:10px;">Solo cuentan las clases marcadas como asistidas por un administrador.</div>
+    <div class="faint" style="margin-top:10px;">Solo cuentan las clases marcadas como asistidas por un administrador dentro del periodo elegido.</div>
   </div>`;
 }
 
@@ -1088,6 +1120,8 @@ function viewTop10(){
 function bindEvents(){
   const q = (sel) => app.querySelector(sel);
   const qa = (sel) => Array.from(app.querySelectorAll(sel));
+
+  qa("[data-topperiodo]").forEach(b => b.onclick = () => { ctx.topPeriodo = b.dataset.topperiodo; render(); });
 
   const btnSalir = q("#btnSalir"); if (btnSalir) btnSalir.onclick = cerrarSesion;
   const btnAct = q("#btnBuscarAct");
